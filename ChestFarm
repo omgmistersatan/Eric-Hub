@@ -10,6 +10,9 @@ WindUI:AddTheme({
     }),
 })
 
+-- Aplica o tema criado
+WindUI:SetTheme("Chest Hunter Theme")
+
 local Window = WindUI:CreateWindow({
     Title = "Eric Hub: Chest Farm",
     Icon = "box",
@@ -48,31 +51,7 @@ local tweenSpeed = 50
 local useTween = true
 local isGoingToAll = false
 local visitedChests = {}
-local antiKickEnabled = true
 local waitBetweenChests = 1.5
-
--- Proteção Anti-Kick
-local function setupAntiKick()
-    -- Desabilita a verificação de velocidade do personagem
-    if LocalPlayer.Character then
-        local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            -- Proteção contra detecção de velocidade anormal
-            local oldNamecall
-            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-                local method = getnamecallmethod()
-                if method == "FireServer" and antiKickEnabled then
-                    local args = {...}
-                    -- Bloqueia chamadas de anti-cheat comuns
-                    if string.find(tostring(self), "Anti") or string.find(tostring(self), "Kick") then
-                        return wait(9e9)
-                    end
-                end
-                return oldNamecall(self, ...)
-            end)
-        end
-    end
-end
 
 -- Função para verificar se o personagem está válido
 local function isCharacterValid()
@@ -140,55 +119,7 @@ local function getChestPosition(chest)
     return nil
 end
 
--- Função para teleportar com segurança (anti-kick)
-local function safeTeleport(targetCFrame)
-    if not isCharacterValid() then return false end
-    
-    local character = LocalPlayer.Character
-    local humanoidRootPart = character.HumanoidRootPart
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    
-    -- Desabilita temporariamente a física
-    local originalCFrame = humanoidRootPart.CFrame
-    
-    -- Método 1: Teleporte em etapas (mais seguro)
-    if useTween then
-        -- Já usa tween, que é mais seguro
-        return true
-    else
-        -- TP instantâneo com proteção
-        local success = pcall(function()
-            -- Desabilita colisões temporariamente
-            for _, part in pairs(character:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                end
-            end
-            
-            -- Teleporta
-            humanoidRootPart.CFrame = targetCFrame
-            
-            -- Aguarda um frame
-            RunService.Heartbeat:Wait()
-            
-            -- Reabilita colisões
-            for _, part in pairs(character:GetDescendants()) do
-                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                    part.CanCollide = true
-                end
-            end
-        end)
-        
-        if not success then
-            humanoidRootPart.CFrame = originalCFrame
-            return false
-        end
-        
-        return true
-    end
-end
-
--- Função para teleportar instantaneamente com proteção
+-- Função para teleportar instantaneamente (CORRIGIDA)
 local function instantTeleport(chest)
     if not isCharacterValid() then return false end
     if not chest or not chest.Parent then return false end
@@ -199,12 +130,15 @@ local function instantTeleport(chest)
     local character = LocalPlayer.Character
     local humanoidRootPart = character.HumanoidRootPart
     
-    local targetCFrame = CFrame.new(targetPosition) * CFrame.new(0, 5, 0)
+    -- TP instantâneo simples e direto
+    local success = pcall(function()
+        humanoidRootPart.CFrame = CFrame.new(targetPosition) * CFrame.new(0, 5, 0)
+    end)
     
-    return safeTeleport(targetCFrame)
+    return success
 end
 
--- Função para fazer tween até o chest com proteção
+-- Função para fazer tween até o chest (CORRIGIDA)
 local function tweenToChest(chest)
     if not isCharacterValid() then return false end
     if not chest or not chest.Parent then return false end
@@ -215,12 +149,10 @@ local function tweenToChest(chest)
     local character = LocalPlayer.Character
     local humanoidRootPart = character.HumanoidRootPart
     
-    isTweening = true
-    
     local distance = (humanoidRootPart.Position - targetPosition).Magnitude
     local tweenTime = distance / tweenSpeed
     
-    -- Limita o tempo máximo do tween para evitar problemas
+    -- Limita o tempo máximo do tween
     if tweenTime > 30 then
         tweenTime = 30
     end
@@ -232,40 +164,26 @@ local function tweenToChest(chest)
     )
     
     local success = pcall(function()
+        isTweening = true
+        
         currentTween = TweenService:Create(humanoidRootPart, tweenInfo, {
             CFrame = CFrame.new(targetPosition) * CFrame.new(0, 5, 0)
         })
         
         currentTween:Play()
+        currentTween.Completed:Wait()
         
-        -- Aguarda com timeout
-        local startTime = tick()
-        local completed = false
-        
-        currentTween.Completed:Connect(function()
-            completed = true
-        end)
-        
-        -- Espera o tween completar ou timeout
-        while not completed and (tick() - startTime) < tweenTime + 5 do
-            if not isGoingToAll and not autoFarmEnabled then
-                currentTween:Cancel()
-                break
-            end
-            wait(0.1)
-        end
-        
-        if not completed then
-            currentTween:Cancel()
-        end
+        isTweening = false
     end)
     
-    isTweening = false
+    if not success then
+        isTweening = false
+    end
     
     return success
 end
 
--- Função para ir ao chest com verificações de segurança
+-- Função para ir ao chest (CORRIGIDA E SIMPLIFICADA)
 local function goToChest(chest)
     if not chest or not chest.Parent then return false end
     if not isCharacterValid() then return false end
@@ -276,9 +194,11 @@ local function goToChest(chest)
         success = tweenToChest(chest)
     else
         success = instantTeleport(chest)
+        -- Aguarda um pouco após TP instantâneo
+        wait(0.1)
     end
     
-    -- Aguarda entre chests para evitar detecção
+    -- Aguarda entre chests
     if success then
         wait(waitBetweenChests)
     end
@@ -331,7 +251,7 @@ local ConfigSection = ChestTab:Section({
 -- Toggle para escolher entre Tween e TP
 ConfigSection:Toggle({
     Title = "Usar Tween",
-    Desc = "Ativado: Movimento suave (RECOMENDADO) | Desativado: TP instantâneo",
+    Desc = "Ativado: Movimento suave | Desativado: TP instantâneo",
     Icon = "move",
     Type = "Checkbox",
     Value = true,
@@ -340,16 +260,16 @@ ConfigSection:Toggle({
         if state then
             WindUI:Notify({
                 Title = "Modo Tween",
-                Content = "Modo mais seguro ativado!",
+                Content = "Movimento suave ativado (mais seguro)",
                 Duration = 2,
-                Icon = "shield",
+                Icon = "activity",
             })
         else
             WindUI:Notify({
                 Title = "Modo TP",
-                Content = "⚠️ Maior risco de kick!",
+                Content = "Teleporte instantâneo ativado (mais rápido)",
                 Duration = 2,
-                Icon = "alert-triangle",
+                Icon = "zap",
             })
         end
     end
@@ -358,7 +278,7 @@ ConfigSection:Toggle({
 -- Slider para velocidade de tween
 ConfigSection:Slider({
     Title = "Velocidade do Tween",
-    Desc = "Velocidade recomendada: 30-80 studs/s",
+    Desc = "Ajuste a velocidade de viagem (studs/segundo)",
     Step = 5,
     Value = {
         Min = 10,
@@ -379,10 +299,10 @@ ConfigSection:Slider({
 -- Slider para tempo de espera entre chests
 ConfigSection:Slider({
     Title = "Espera Entre Chests",
-    Desc = "Tempo de espera recomendado: 1-3 segundos (anti-kick)",
+    Desc = "Tempo de espera entre cada chest (recomendado: 1-2s)",
     Step = 0.1,
     Value = {
-        Min = 0.5,
+        Min = 0.3,
         Max = 5,
         Default = 1.5,
     },
@@ -394,34 +314,6 @@ ConfigSection:Slider({
             Duration = 2,
             Icon = "clock",
         })
-    end
-})
-
--- Toggle para proteção anti-kick
-ConfigSection:Toggle({
-    Title = "Proteção Anti-Kick",
-    Desc = "Ativa proteções extras contra kick (RECOMENDADO)",
-    Icon = "shield",
-    Type = "Checkbox",
-    Value = true,
-    Callback = function(state)
-        antiKickEnabled = state
-        if state then
-            setupAntiKick()
-            WindUI:Notify({
-                Title = "Proteção Ativada",
-                Content = "Sistema anti-kick ativo!",
-                Duration = 2,
-                Icon = "shield-check",
-            })
-        else
-            WindUI:Notify({
-                Title = "Proteção Desativada",
-                Content = "⚠️ Maior risco de kick!",
-                Duration = 2,
-                Icon = "shield-off",
-            })
-        end
     end
 })
 
@@ -494,7 +386,7 @@ ControlSection:Button({
 -- Botão para todos os chests
 ControlSection:Button({
     Title = "Ir para Todos os Chests",
-    Desc = "Visita TODOS os chests do mapa com segurança",
+    Desc = "Visita TODOS os chests do mapa sequencialmente",
     Icon = "map",
     Callback = function()
         if isGoingToAll then
@@ -532,8 +424,8 @@ ControlSection:Button({
         visitedChests = {}
         
         WindUI:Notify({
-            Title = "Iniciando Coleta Segura",
-            Content = "Coletando " .. #allChests .. " chests com proteção anti-kick!",
+            Title = "Iniciando Coleta",
+            Content = "Coletando " .. #allChests .. " chests!",
             Duration = 3,
             Icon = "play-circle",
         })
@@ -636,8 +528,8 @@ ControlSection:Button({
 -- Auto Farm
 local autoFarmEnabled = false
 ControlSection:Toggle({
-    Title = "Auto Farm Chests (Loop Seguro)",
-    Desc = "Farm infinito com proteção anti-kick",
+    Title = "Auto Farm Chests (Loop)",
+    Desc = "Farm infinito de todos os chests",
     Icon = "repeat",
     Type = "Checkbox",
     Value = false,
@@ -646,7 +538,7 @@ ControlSection:Toggle({
         if state then
             WindUI:Notify({
                 Title = "Auto Farm Ativado",
-                Content = "Farm infinito iniciado com segurança!",
+                Content = "Farm infinito iniciado!",
                 Duration = 3,
                 Icon = "infinity",
             })
@@ -654,12 +546,6 @@ ControlSection:Toggle({
             spawn(function()
                 while autoFarmEnabled do
                     if not isCharacterValid() then
-                        WindUI:Notify({
-                            Title = "Aguardando",
-                            Content = "Esperando personagem respawnar...",
-                            Duration = 3,
-                            Icon = "loader",
-                        })
                         wait(5)
                         continue
                     end
@@ -726,28 +612,24 @@ ControlSection:Toggle({
 
 -- Seção de informações
 local InfoSection = ChestTab:Section({
-    Title = "Informações & Dicas",
+    Title = "Informações",
     Box = true,
     Opened = true,
 })
 
 InfoSection:Paragraph({
-    Title = "Configurações Recomendadas Anti-Kick",
-    Desc = "✓ Use Modo Tween (mais seguro)\n✓ Velocidade: 30-80 studs/s\n✓ Espera entre chests: 1.5-2s\n✓ Mantenha Proteção Anti-Kick ativa\n✓ Evite TP instantâneo em jogos com anti-cheat forte",
-    Color = "Green",
+    Title = "Como Usar",
+    Desc = "• Chest Mais Próximo: Vai para o chest mais perto\n• Todos os Chests: Visita TODOS os chests uma vez\n• Auto Farm Loop: Coleta chests infinitamente\n• Modo Tween: Movimento suave (mais seguro)\n• Modo TP: Teleporte instantâneo (mais rápido)",
+    Color = "Blue",
 })
 
--- Setup inicial da proteção
-setupAntiKick()
-
--- Reconexão automática em caso de morte
+-- Reconexão automática
 LocalPlayer.CharacterAdded:Connect(function(character)
     wait(1)
-    setupAntiKick()
     
     if autoFarmEnabled then
         WindUI:Notify({
-            Title = "Personagem Respawnado",
+            Title = "Respawnado",
             Content = "Continuando auto farm...",
             Duration = 2,
             Icon = "rotate-cw",
@@ -758,9 +640,7 @@ end)
 -- Notificação inicial
 WindUI:Notify({
     Title = "Eric Hub: Chest Farm",
-    Content = "Carregado Com Sucesso!",
+    Content = "Tema 'Chest Hunter' aplicado com sucesso!",
     Duration = 5,
-    Icon = "shield-check",
+    Icon = "box",
 })
-
-WindUI:SetTheme("Chest Hunter Theme")
