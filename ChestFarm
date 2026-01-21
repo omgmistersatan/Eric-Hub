@@ -1,0 +1,495 @@
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+WindUI:AddTheme({
+    Name = "Chest Hunter Theme",
+    Accent = WindUI:Gradient({
+        ["0"] = { Color = Color3.fromHex("#1f1f23"), Transparency = 0 },
+        ["100"] = { Color = Color3.fromHex("#18181b"), Transparency = 0 },
+    }, {
+        Rotation = 0,
+    }),
+})
+
+local Window = WindUI:CreateWindow({
+    Title = "Eric Hub: Chest Farm",
+    Icon = "box",
+    Author = "by pagbiliha",
+})
+
+Window:EditOpenButton({
+    Title = "Open Eric Hub",
+    Icon = "box",
+    CornerRadius = UDim.new(0, 16),
+    StrokeThickness = 2,
+    Color = ColorSequence.new(
+        Color3.fromHex("FFD700"),
+        Color3.fromHex("FFA500")
+    ),
+    OnlyMobile = false,
+    Enabled = true,
+    Draggable = true,
+})
+
+-- Tab de Chest
+local ChestTab = Window:Tab({
+    Title = "Chest",
+    Icon = "box",
+    Locked = false,
+})
+
+-- Variáveis de controle
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local isTweening = false
+local currentTween = nil
+local tweenSpeed = 50
+local useTween = true
+local isGoingToAll = false
+local visitedChests = {} -- Tabela para rastrear chests visitados
+
+-- Função para encontrar todos os chests no workspace
+local function findAllChests()
+    local chests = {}
+    for _, obj in pairs(game.Workspace:GetDescendants()) do
+        if obj:IsA("Model") and (
+            string.lower(obj.Name):find("chest") or 
+            string.lower(obj.Name):find("crate") or
+            string.lower(obj.Name):find("box")
+        ) then
+            -- Verifica se o chest tem uma posição válida
+            local hasPosition = false
+            if obj.PrimaryPart then
+                hasPosition = true
+            else
+                for _, child in pairs(obj:GetDescendants()) do
+                    if child:IsA("BasePart") then
+                        hasPosition = true
+                        break
+                    end
+                end
+            end
+            
+            if hasPosition then
+                table.insert(chests, obj)
+            end
+        end
+    end
+    return chests
+end
+
+-- Função para pegar a posição de um chest
+local function getChestPosition(chest)
+    if chest.PrimaryPart then
+        return chest.PrimaryPart.Position
+    end
+    
+    -- Procura qualquer parte no chest
+    for _, child in pairs(chest:GetDescendants()) do
+        if child:IsA("BasePart") then
+            return child.Position
+        end
+    end
+    
+    return nil
+end
+
+-- Função para teleportar instantaneamente (sem kick)
+local function instantTeleport(chest)
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then
+        return false
+    end
+    
+    local targetPosition = getChestPosition(chest)
+    if not targetPosition then
+        return false
+    end
+    
+    local humanoidRootPart = character.HumanoidRootPart
+    
+    -- TP instantâneo seguro
+    humanoidRootPart.CFrame = CFrame.new(targetPosition) * CFrame.new(0, 5, 0)
+    
+    return true
+end
+
+-- Função para fazer tween até o chest
+local function tweenToChest(chest)
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then
+        return false
+    end
+    
+    local targetPosition = getChestPosition(chest)
+    if not targetPosition then
+        return false
+    end
+    
+    local humanoidRootPart = character.HumanoidRootPart
+    
+    isTweening = true
+    
+    local distance = (humanoidRootPart.Position - targetPosition).Magnitude
+    local tweenTime = distance / tweenSpeed
+    
+    local tweenInfo = TweenInfo.new(
+        tweenTime,
+        Enum.EasingStyle.Linear,
+        Enum.EasingDirection.InOut
+    )
+    
+    currentTween = TweenService:Create(humanoidRootPart, tweenInfo, {
+        CFrame = CFrame.new(targetPosition) * CFrame.new(0, 5, 0)
+    })
+    
+    currentTween:Play()
+    currentTween.Completed:Wait()
+    isTweening = false
+    
+    return true
+end
+
+-- Função para ir ao chest (escolhe entre tween ou TP)
+local function goToChest(chest)
+    if useTween then
+        return tweenToChest(chest)
+    else
+        return instantTeleport(chest)
+    end
+end
+
+-- Função para ordenar chests por distância do jogador
+local function sortChestsByDistance(chests)
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then
+        return chests
+    end
+    
+    local playerPos = character.HumanoidRootPart.Position
+    
+    table.sort(chests, function(a, b)
+        local posA = getChestPosition(a)
+        local posB = getChestPosition(b)
+        
+        if not posA then return false end
+        if not posB then return true end
+        
+        local distA = (playerPos - posA).Magnitude
+        local distB = (playerPos - posB).Magnitude
+        
+        return distA < distB
+    end)
+    
+    return chests
+end
+
+-- Seção de configurações
+local ConfigSection = ChestTab:Section({
+    Title = "Configurações de Movimento",
+    Box = true,
+    Opened = true,
+})
+
+-- Toggle para escolher entre Tween e TP
+ConfigSection:Toggle({
+    Title = "Usar Tween",
+    Desc = "Ativado: Movimento suave | Desativado: TP instantâneo",
+    Icon = "move",
+    Type = "Checkbox",
+    Value = true,
+    Callback = function(state)
+        useTween = state
+        if state then
+            WindUI:Notify({
+                Title = "Modo Tween",
+                Content = "Usando movimento suave (mais seguro)",
+                Duration = 2,
+                Icon = "activity",
+            })
+        else
+            WindUI:Notify({
+                Title = "Modo TP",
+                Content = "Usando teleporte instantâneo (mais rápido)",
+                Duration = 2,
+                Icon = "zap",
+            })
+        end
+    end
+})
+
+-- Slider para velocidade de tween
+ConfigSection:Slider({
+    Title = "Velocidade do Tween",
+    Desc = "Ajuste a velocidade de viagem (studs/segundo)",
+    Step = 5,
+    Value = {
+        Min = 10,
+        Max = 200,
+        Default = 50,
+    },
+    Callback = function(value)
+        tweenSpeed = value
+        WindUI:Notify({
+            Title = "Velocidade Atualizada",
+            Content = "Nova velocidade: " .. value .. " studs/s",
+            Duration = 2,
+            Icon = "gauge",
+        })
+    end
+})
+
+-- Seção de controles
+local ControlSection = ChestTab:Section({
+    Title = "Controles de Chest",
+    Box = true,
+    Opened = true,
+})
+
+-- Botão para encontrar chest mais próximo
+ControlSection:Button({
+    Title = "Ir para Chest Mais Próximo",
+    Desc = "Vai para o chest mais próximo de você",
+    Icon = "target",
+    Callback = function()
+        local chests = findAllChests()
+        if #chests == 0 then
+            WindUI:Notify({
+                Title = "Nenhum Chest",
+                Content = "Nenhum chest encontrado no mapa!",
+                Duration = 3,
+                Icon = "x-circle",
+            })
+            return
+        end
+        
+        local sortedChests = sortChestsByDistance(chests)
+        local nearestChest = sortedChests[1]
+        
+        if nearestChest then
+            WindUI:Notify({
+                Title = "Indo para Chest",
+                Content = "Viajando para: " .. nearestChest.Name,
+                Duration = 2,
+                Icon = "navigation",
+            })
+            goToChest(nearestChest)
+            WindUI:Notify({
+                Title = "Chegou!",
+                Content = "Você chegou no chest!",
+                Duration = 2,
+                Icon = "check-circle",
+            })
+        end
+    end
+})
+
+-- Botão para ir para TODOS os chests (otimizado)
+ControlSection:Button({
+    Title = "Ir para Todos os Chests",
+    Desc = "Visita TODOS os chests do mapa (do mais próximo ao mais longe)",
+    Icon = "map",
+    Callback = function()
+        if isGoingToAll then
+            WindUI:Notify({
+                Title = "Já em Andamento",
+                Content = "Já estou visitando todos os chests!",
+                Duration = 2,
+                Icon = "alert-circle",
+            })
+            return
+        end
+        
+        local allChests = findAllChests()
+        if #allChests == 0 then
+            WindUI:Notify({
+                Title = "Nenhum Chest",
+                Content = "Nenhum chest encontrado no mapa!",
+                Duration = 3,
+                Icon = "x-circle",
+            })
+            return
+        end
+        
+        isGoingToAll = true
+        visitedChests = {}
+        
+        WindUI:Notify({
+            Title = "Iniciando Coleta Total",
+            Content = "Visitando TODOS os " .. #allChests .. " chests do mapa!",
+            Duration = 3,
+            Icon = "play-circle",
+        })
+        
+        spawn(function()
+            local chestsVisited = 0
+            local chestsToVisit = allChests
+            
+            while isGoingToAll and #chestsToVisit > 0 do
+                -- Reordena os chests pela distância atual a cada iteração
+                chestsToVisit = sortChestsByDistance(chestsToVisit)
+                
+                -- Pega o chest mais próximo
+                local currentChest = table.remove(chestsToVisit, 1)
+                
+                if currentChest and currentChest.Parent then
+                    local success = goToChest(currentChest)
+                    
+                    if success then
+                        chestsVisited = chestsVisited + 1
+                        visitedChests[currentChest] = true
+                        
+                        -- Notifica a cada 10 chests
+                        if chestsVisited % 10 == 0 or chestsVisited == #allChests then
+                            WindUI:Notify({
+                                Title = "Progresso",
+                                Content = chestsVisited .. "/" .. #allChests .. " chests coletados",
+                                Duration = 2,
+                                Icon = "trending-up",
+                            })
+                        end
+                        
+                        -- Espera baseada no modo
+                        if not useTween then
+                            wait(0.3) -- Espera curta para TP
+                        else
+                            wait(0.5) -- Espera para tween
+                        end
+                    end
+                end
+            end
+            
+            isGoingToAll = false
+            
+            WindUI:Notify({
+                Title = "Coleta Completa!",
+                Content = "Visitou TODOS os " .. chestsVisited .. " chests do mapa!",
+                Duration = 5,
+                Icon = "check-circle-2",
+            })
+        end)
+    end
+})
+
+-- Botão para parar a coleta
+ControlSection:Button({
+    Title = "Parar Coleta",
+    Desc = "Para a coleta de chests ou tween atual",
+    Icon = "square",
+    Callback = function()
+        isGoingToAll = false
+        
+        if currentTween and isTweening then
+            currentTween:Cancel()
+            isTweening = false
+        end
+        
+        WindUI:Notify({
+            Title = "Parado",
+            Content = "Coleta e viagem canceladas!",
+            Duration = 2,
+            Icon = "pause-circle",
+        })
+    end
+})
+
+-- Toggle para auto-farm chests (loop infinito)
+local autoFarmEnabled = false
+ControlSection:Toggle({
+    Title = "Auto Farm Chests (Loop)",
+    Desc = "Automaticamente coleta TODOS os chests em loop infinito",
+    Icon = "repeat",
+    Type = "Checkbox",
+    Value = false,
+    Callback = function(state)
+        autoFarmEnabled = state
+        if state then
+            WindUI:Notify({
+                Title = "Auto Farm Ativado",
+                Content = "Começando farm infinito de TODOS os chests!",
+                Duration = 3,
+                Icon = "infinity",
+            })
+            
+            spawn(function()
+                while autoFarmEnabled do
+                    local allChests = findAllChests()
+                    
+                    if #allChests > 0 then
+                        WindUI:Notify({
+                            Title = "Novo Ciclo",
+                            Content = "Farmando " .. #allChests .. " chests do mapa",
+                            Duration = 2,
+                            Icon = "refresh-cw",
+                        })
+                        
+                        local chestsToVisit = allChests
+                        local cycleCount = 0
+                        
+                        while autoFarmEnabled and #chestsToVisit > 0 do
+                            -- Reordena pela distância
+                            chestsToVisit = sortChestsByDistance(chestsToVisit)
+                            
+                            -- Pega o mais próximo
+                            local currentChest = table.remove(chestsToVisit, 1)
+                            
+                            if currentChest and currentChest.Parent then
+                                goToChest(currentChest)
+                                cycleCount = cycleCount + 1
+                                
+                                if not useTween then
+                                    wait(0.3)
+                                else
+                                    wait(0.5)
+                                end
+                            end
+                        end
+                        
+                        if autoFarmEnabled then
+                            WindUI:Notify({
+                                Title = "Ciclo Completo",
+                                Content = "Coletou " .. cycleCount .. " chests. Reiniciando...",
+                                Duration = 2,
+                                Icon = "check",
+                            })
+                        end
+                    end
+                    
+                    if autoFarmEnabled then
+                        wait(3) -- Espera 3 segundos antes do próximo ciclo
+                    end
+                end
+            end)
+        else
+            WindUI:Notify({
+                Title = "Auto Farm Desativado",
+                Content = "Farm automático parado!",
+                Duration = 2,
+                Icon = "stop-circle",
+            })
+        end
+    end
+})
+
+-- Seção de informações
+local InfoSection = ChestTab:Section({
+    Title = "Informações",
+    Box = true,
+    Opened = true,
+})
+
+InfoSection:Paragraph({
+    Title = "Como Usar",
+    Desc = "• O script agora visita TODOS os chests do mapa\n• Os chests são visitados do mais próximo ao mais longe\n• Funciona em todas as islands/áreas do mapa\n• Use modo TP para velocidade máxima\n• Auto Farm coleta infinitamente todos os chests",
+    Color = "Blue",
+    Image = "",
+    ImageSize = 30,
+})
+
+-- Notificação inicial
+WindUI:Notify({
+    Title = "Eric Hub: Chest Farm",
+    Content = "Bem-vindo!",
+    Duration = 5,
+    Icon = "box",
+})
